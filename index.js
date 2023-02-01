@@ -53,8 +53,8 @@ app.post("/add", function (req, res) {
     res.json({ original_url: urls[currentkey], short_url: currentkey });
     return;
   }
-  urls[Object.keys(urls).length] = url;
   let num = Object.keys(urls).length - 3;
+  urls[num] = url;
   // save urls to database
   dburls.updateOne(
     { function: "sync urls" },
