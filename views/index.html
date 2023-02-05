@@ -23,6 +23,7 @@
               id="url_input"
               type="text"
               name="url"
+              onclick="getClipboard()"
               placeholder="https://www.freecodecamp.org/"
             />
             <input type="submit" value="POST URL" />
@@ -30,5 +31,13 @@
         </form>
       </section>
     </main>
+    <script>
+      const input = document.getElementById("url_input");
+      
+      async function getClipboard() {
+        const text = await navigator.clipboard.readText();
+        input.value = text;
+      }
+    </script>
   </body>
 </html>
