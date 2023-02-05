@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Copy your link - URL Shortener</title>
+    <link href="/public/style.css" rel="stylesheet" type="text/css" />
+  </head>
+  <body>
+    <a id="resultlink" href=""></a>
+    <button onclick="copyToClipboard()">Click here to copy your link</button>
+    <script>
+      const resultlink = document.getElementById("resultlink");
+      function copyToClipboard() {
+        const params = new Proxy(new URLSearchParams(window.location.search), {
+          get: (searchParams, prop) => searchParams.get(prop),
+        });
+        const link = window.location.hostname + "/" + params.url;
+        resultlink.value = link;
+        resultlink.href = link;
+        const el = document.createElement("textarea");
+        el.value = link;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      }
+    </script>
+  </body>
+</html>

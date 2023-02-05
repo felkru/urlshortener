@@ -2,7 +2,7 @@
 
 <html>
   <head>
-    <title>URL Shortener</title>
+    <title>Create Link - URL Shortener</title>
     <link
       rel="icon"
       type="image/png"
@@ -33,7 +33,7 @@
     </main>
     <script>
       const input = document.getElementById("url_input");
-      
+
       async function getClipboard() {
         const text = await navigator.clipboard.readText();
         input.value = text;

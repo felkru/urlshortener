@@ -32,6 +32,10 @@ app.get("/", function (req, res) {
   res.sendFile(process.cwd() + "/views/index.html");
 });
 
+app.get("/success", function (req, res) {
+  res.sendFile(process.cwd() + "/views/success.html");
+});
+
 app.get("/redirects", function (req, res) {
   res.json(urls);
 });
@@ -53,7 +57,7 @@ app.post("/add", function (req, res) {
     res.json({ original_url: urls[currentkey], short_url: currentkey });
     return;
   }
-  let num = Object.keys(urls).length - 3;
+  let num = Object.keys(urls).length - 2;
   urls[num] = url;
   // save urls to database
   dburls.updateOne(
@@ -64,7 +68,7 @@ app.post("/add", function (req, res) {
       },
     }
   );
-  res.json({ original_url: url, short_url: num });
+  res.redirect("success" + `?url=${num}`);
 });
 
 app.listen(port, function () {
