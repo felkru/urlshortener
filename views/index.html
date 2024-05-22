@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 
-<html>
+<html lang="en">
   <head>
     <title>Create Link - URL Shortener</title>
     <link
@@ -19,12 +19,20 @@
         <form action="add" method="POST">
           <fieldset>
             <legend>URL Shortener</legend>
+            <label for="url_key">Key:</label>
+            <input
+                    id="url_key"
+                    type="text"
+                    name="key"
+                    placeholder="Generates a number"
+            />
+            <label for="url_input">URL:</label>
             <input
               id="url_input"
               type="text"
               name="url"
               onclick="getClipboard()"
-              placeholder="https://www.freecodecamp.org/"
+              placeholder="https://www.example.org/"
             />
             <input type="submit" value="POST URL" />
           </fieldset>

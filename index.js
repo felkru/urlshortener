@@ -28,8 +28,17 @@ app.use(cors(), bodyParser.urlencoded({ extended: false }));
 
 app.use("/public", express.static(`${process.cwd()}/public`));
 
+app.use((req, res, next) => {
+  console.log(`Host: ${req.get('host')}`);
+  next();
+});
+
 app.get("/", function (req, res) {
-  res.sendFile(process.cwd() + "/views/index.html");
+  if (req.get('host') == "url.felkru.com" || /localhost/.test(req.get('host'))) {
+    res.sendFile(process.cwd() + "/views/index.html");
+  } else {
+    res.redirect(301, 'https://www.felix-krueckel.com/');
+  }
 });
 
 app.get("/success", function (req, res) {
@@ -48,6 +57,7 @@ app.get("/:num", function (req, res) {
 
 app.post("/add", function (req, res) {
   let url = req.body.url;
+  let key = req.body.key;
   // check if url is valid
   if (!url.match(/^(http|https):\/\//)) url = "https://" + url;
   if (!url.match(/.*\..*$/)) return res.json({ error: "invalid URL" });
@@ -57,18 +67,22 @@ app.post("/add", function (req, res) {
     res.json({ original_url: urls[currentkey], short_url: currentkey });
     return;
   }
-  let num = Object.keys(urls).length - 2;
-  urls[num] = url;
+  console.log("This is my key:", key)
+  if (key == "") {
+    key = Object.keys(urls).length - 2;
+  }
+  urls[key] = url;
   // save urls to database
   dburls.updateOne(
-    { function: "sync urls" },
-    {
-      $set: {
-        [num]: url,
-      },
-    }
+      { function: "sync urls" },
+      {
+        $set: {
+          [key]: url,
+        },
+      }
   );
-  res.redirect("success" + `?url=${num}`);
+  console.log(urls);
+  res.redirect("success" + `?url=${key}`);
 });
 
 app.listen(port, function () {
