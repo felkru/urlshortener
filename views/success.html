@@ -13,18 +13,21 @@
     <script>
       const resultlink = document.getElementById("resultlink");
       function copyToClipboard() {
-        const params = new Proxy(new URLSearchParams(window.location.search), {
-          get: (searchParams, prop) => searchParams.get(prop),
-        });
-        const link = window.location.hostname + "/" + params.url;
-        resultlink.value = link;
+        const rawKey = new URLSearchParams(window.location.search).get("url") || "";
+        // Only allow safe key characters before using in a URL (prevents XSS via href)
+        if (!/^[a-zA-Z0-9_-]{1,64}$/.test(rawKey)) return;
+        const link = window.location.origin + "/" + rawKey;
+        resultlink.textContent = link;
         resultlink.href = link;
-        const el = document.createElement("textarea");
-        el.value = link;
-        document.body.appendChild(el);
-        el.select();
-        document.execCommand("copy");
-        document.body.removeChild(el);
+        navigator.clipboard.writeText(link).catch(function () {
+          // Fallback for browsers that block clipboard API
+          const el = document.createElement("textarea");
+          el.value = link;
+          document.body.appendChild(el);
+          el.select();
+          document.execCommand("copy");
+          document.body.removeChild(el);
+        });
       }
     </script>
   </body>
