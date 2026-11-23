@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Links - URL Shortener</title>
+    <link href="/public/style.css" rel="stylesheet" />
+  </head>
+  <body>
+    <main>
+      <header class="bar">
+        <h1>URL Shortener</h1>
+        <form method="post" action="/logout" id="logout-form">
+          <input type="hidden" name="_csrf" id="logout-csrf" value="" />
+          <span id="who"></span>
+          <button type="submit" class="quiet">Sign out</button>
+        </form>
+      </header>
+
+      <p id="message" class="notice" role="status" hidden></p>
+
+      <form id="add-form" class="card row">
+        <div>
+          <label for="slug">Short name</label>
+          <input id="slug" name="slug" type="text" maxlength="64" pattern="[A-Za-z0-9_-]{1,64}" placeholder="next free number" autocapitalize="none" spellcheck="false" />
+        </div>
+        <div class="grow">
+          <label for="url">Target</label>
+          <input id="url" name="url" type="text" maxlength="2048" placeholder="https://www.example.org/" required autocapitalize="none" spellcheck="false" />
+        </div>
+        <button type="button" id="paste" class="quiet">Paste</button>
+        <button type="submit">Add link</button>
+      </form>
+
+      <div class="bar">
+        <input id="filter" type="search" placeholder="Filter" aria-label="Filter links" />
+        <span id="count"></span>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Short link</th><th>Target</th><th></th></tr>
+        </thead>
+        <tbody id="links"></tbody>
+      </table>
+
+      <details class="card">
+        <summary>Change password</summary>
+        <form id="password-form">
+          <input type="text" name="username" id="pw-username" autocomplete="username" hidden />
+          <label for="current">Current password</label>
+          <input id="current" name="current" type="password" autocomplete="current-password" maxlength="128" required />
+          <label for="password">New password (12 to 128 characters)</label>
+          <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+          <label for="password2">Repeat the new password</label>
+          <input id="password2" name="password2" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+          <button type="submit">Change password</button>
+        </form>
+      </details>
+    </main>
+    <script src="/public/admin.js"></script>
+  </body>
+</html>
