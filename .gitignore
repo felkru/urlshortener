@@ -1,4 +1,7 @@
 .vscode/*
 .env
+.env.*
+!sample.env
 node_modules/
 .tar
+.DS_Store
