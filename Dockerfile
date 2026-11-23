@@ -1,23 +1,20 @@
-# Use an official Node.js runtime as a parent image
-FROM node:16-alpine
+# Node 22 is the maintained LTS line (the image ran on Node 16, which gets no fixes any more).
+FROM node:22-alpine
 
-# Set the working directory in the container
-WORKDIR home/felkru/app
-
-# Copy package.json and package-lock.json
-COPY package*.json ./
-
-# Install dependencies
-RUN npm install
-
-# Copy the rest of the application code
-COPY . .
-
-# Expose the port your app runs on
-EXPOSE 3000
-
-# Define environment variable
 ENV NODE_ENV=production
+WORKDIR /home/node/app
 
-# Run the application
-CMD ["npm", "start"]
+# Exactly the locked versions, without development tools.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+
+COPY index.js ./
+COPY lib ./lib
+COPY public ./public
+COPY views ./views
+COPY scripts ./scripts
+
+# No root in the container, and node directly (no npm process kept in memory).
+USER node
+EXPOSE 3000
+CMD ["node", "index.js"]
