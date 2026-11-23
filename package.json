@@ -1,21 +1,21 @@
 {
   "name": "shorturl",
-  "version": "0.0.3",
-  "description": "API project for freeCodeCamp",
+  "version": "1.0.0",
+  "description": "Personal URL shortener: public redirects, login and API token for changes",
   "main": "index.js",
+  "private": true,
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "node --watch index.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
-    "body-parser": "^1.20.1",
-    "cors": "^2.8.5",
     "dotenv": "^8.2.0",
-    "express": "^4.17.1",
-    "mongodb": "4.13"
+    "express": "^4.21.2",
+    "mongodb": "^4.17.2"
   },
-  "license": "MIT",
-  "devDependencies": {
-    "nodemon": "^2.0.4"
-  }
+  "license": "MIT"
 }
