@@ -15,7 +15,21 @@ function createApp({ store, config }) {
   const sessions = new auth.Sessions(config.sessionSecret);
   const tokenEnabled = typeof config.apiToken === "string" && config.apiToken.length >= 32;
   const setupEnabled = typeof config.setupToken === "string" && config.setupToken.length >= 32;
+  // Three separate counters, so noise on one door never locks another: passwords, the setup
+  // token, and API tokens (no cap across addresses there: a 256-bit token cannot be guessed,
+  // and a stranger must not be able to stop the owner's scripts).
   const failures = new auth.FailureLimiter(config.failureLimits);
+  const setupFailures = new auth.FailureLimiter(config.failureLimits);
+  const tokenFailures = new auth.FailureLimiter({ ...config.failureLimits, globalMax: Infinity });
+  // Addresses the owner has signed in from skip the cap across addresses (not their own backoff).
+  const knownAddress = (req) => Boolean(store.user && Array.isArray(store.user.known_addresses) && store.user.known_addresses.includes(req.ipKey));
+  // One write to the link list at a time, so "does it exist?" and "store it" cannot interleave.
+  let writes = Promise.resolve();
+  const exclusive = (fn) => {
+    const run = writes.then(fn, fn);
+    writes = run.catch(() => {});
+    return run;
+  };
   const redirectRate = new auth.RateWindow(config.redirectsPerMinute || 240, 60_000);
   const adminRate = new auth.RateWindow(config.adminPerMinute || 120, 60_000);
 
@@ -65,14 +79,14 @@ function createApp({ store, config }) {
     req.auth = null;
     const header = req.headers.authorization;
     if (typeof header === "string" && header) {
-      const wait = failures.waitMs(req.ipKey);
-      if (wait) return tooMany(res, Math.ceil(wait / 1000), false);
       const m = /^Bearer ([A-Za-z0-9._~+/=-]{1,256})$/.exec(header);
       if (m && tokenEnabled && auth.safeEqual(m[1], config.apiToken)) {
         req.auth = { kind: "token" };
         return next();
       }
-      failures.fail(req.ipKey);
+      const wait = tokenFailures.waitMs(req.ipKey);
+      if (wait) return tooMany(res, Math.ceil(wait / 1000), false);
+      tokenFailures.fail(req.ipKey);
       log(`auth: wrong API token from ${req.clientIp}`);
       res.set("WWW-Authenticate", "Bearer");
       return res.status(401).json({ error: "invalid token" });
@@ -135,25 +149,29 @@ function createApp({ store, config }) {
   app.post("/login", limit(adminRate), wrap(async (req, res) => {
     if (!sessions.enabled) return res.status(503).send(pages.messagePage("Login is switched off", "The server has no session secret set."));
     if (!sameOrigin(req)) return res.status(403).send(pages.messagePage("Not allowed", "Please sign in from the shortener's own page."));
-    const wait = failures.waitMs(req.ipKey);
+    const wait = failures.waitMs(req.ipKey, Date.now(), { skipGlobal: knownAddress(req) });
     if (wait) return tooMany(res, Math.ceil(wait / 1000), true);
     const username = typeof req.body.username === "string" ? req.body.username.trim().toLowerCase() : "";
     const password = typeof req.body.password === "string" ? req.body.password : "";
     // Counted before the check, so a burst of parallel tries cannot slip past the limit.
-    failures.fail(req.ipKey);
+    const ticket = failures.fail(req.ipKey);
     const user = await store.refreshUser();
     const fits = username.length <= 64 && password.length > 0 && password.length <= auth.PASSWORD_MAX;
     const passwordOk = await auth.verifyPassword(fits ? password : "", user && user.password);
     const ok = Boolean(user) && fits && passwordOk && auth.safeEqual(username, user.username);
     if (!ok) {
       log(`auth: failed login from ${req.clientIp}`);
-      const locked = failures.waitMs(req.ipKey);
+      const locked = failures.waitMs(req.ipKey, Date.now(), { skipGlobal: knownAddress(req) });
       const hint = locked ? ` Too many tries: wait ${Math.ceil(locked / 1000)} seconds.` : "";
       if (locked) res.set("Retry-After", String(Math.ceil(locked / 1000)));
       return res.status(401).send(pages.loginPage({ error: "Wrong user name or password." + hint, username: username.slice(0, 64) }));
     }
-    failures.success(req.ipKey);
+    failures.success(req.ipKey, ticket);
     log(`auth: login from ${req.clientIp}`);
+    if (!knownAddress(req)) {
+      const known = [req.ipKey, ...(Array.isArray(user.known_addresses) ? user.known_addresses : [])].slice(0, 8);
+      await store.updateUser({ known_addresses: known, updated_at: new Date() });
+    }
     sessions.setCookie(res, sessions.issue(user.session_epoch || 0));
     res.redirect(303, "/");
   }));
@@ -162,14 +180,14 @@ function createApp({ store, config }) {
   // server's environment. Afterwards both routes answer 404 like any unknown page.
   async function setupOpen(req, res, token) {
     const notFound = () => { res.status(404).json({ error: "not found" }); return false; };
-    if (!sessions.enabled || !setupEnabled) return notFound();
-    const wait = failures.waitMs(req.ipKey);
+    if (!sessions.enabled || !setupEnabled || store.user) return notFound();
+    const wait = setupFailures.waitMs(req.ipKey);
     if (wait) { tooMany(res, Math.ceil(wait / 1000), true); return false; }
+    // Counted before the check, like a password try.
+    const ticket = setupFailures.fail(req.ipKey);
+    if (typeof token !== "string" || !auth.safeEqual(token, config.setupToken)) return notFound();
+    setupFailures.success(req.ipKey, ticket);
     if (await store.refreshUser()) return notFound();
-    if (typeof token !== "string" || !auth.safeEqual(token, config.setupToken)) {
-      failures.fail(req.ipKey);
-      return notFound();
-    }
     return true;
   }
 
@@ -188,7 +206,9 @@ function createApp({ store, config }) {
       return res.status(400).send(pages.setupPage({ token: req.body.token, error, username, min: auth.PASSWORD_MIN, max: auth.PASSWORD_MAX }));
     }
     const password = await auth.hashPassword(req.body.password);
-    const created = await store.createUser({ username, password, session_epoch: 1, created_at: new Date(), updated_at: new Date() });
+    const created = await store.createUser({
+      username, password, session_epoch: 1, known_addresses: [req.ipKey], created_at: new Date(), updated_at: new Date(),
+    });
     if (!created) return res.status(404).json({ error: "not found" });
     log(`auth: login created for "${username}" from ${req.clientIp}; the setup page is closed now`);
     sessions.setCookie(res, sessions.issue(store.user.session_epoch));
@@ -208,15 +228,15 @@ function createApp({ store, config }) {
   }
 
   app.post("/account/password", limit(adminRate), identify, requireSessionJson, requireCsrf, wrap(async (req, res) => {
-    const wait = failures.waitMs(req.ipKey);
+    const wait = failures.waitMs(req.ipKey, Date.now(), { skipGlobal: knownAddress(req) });
     if (wait) return tooMany(res, Math.ceil(wait / 1000), false);
     const current = typeof req.body.current === "string" ? req.body.current : "";
-    failures.fail(req.ipKey);
+    const ticket = failures.fail(req.ipKey);
     const user = await store.refreshUser();
     if (!user || current.length > auth.PASSWORD_MAX || !(await auth.verifyPassword(current, user.password))) {
       return res.status(403).json({ error: "The current password is wrong." });
     }
-    failures.success(req.ipKey);
+    failures.success(req.ipKey, ticket);
     const error = auth.checkNewPassword(req.body.password, req.body.password2);
     if (error) return res.status(400).json({ error });
     const password = await auth.hashPassword(req.body.password);
@@ -251,7 +271,7 @@ function createApp({ store, config }) {
     res.json({ count: links.length, links });
   });
 
-  api.post("/links", wrap(async (req, res) => {
+  api.post("/links", wrap((req, res) => exclusive(async () => {
     const target = rules.normalizeTarget(req.body.url, ownHost);
     if (!target.ok) return res.status(400).json({ error: target.error });
     let slug = req.body.slug;
@@ -267,7 +287,7 @@ function createApp({ store, config }) {
     await store.putLink(slug, target.url);
     log(`links: created "${slug}" (${req.auth.kind})`);
     res.status(201).json({ slug, url: target.url, short_url: shortUrl(slug) });
-  }));
+  })));
 
   function existing(req, res) {
     const slug = req.params.slug;
@@ -279,7 +299,7 @@ function createApp({ store, config }) {
     return slug;
   }
 
-  api.put("/links/:slug", wrap(async (req, res) => {
+  api.put("/links/:slug", wrap((req, res) => exclusive(async () => {
     const slug = existing(req, res);
     if (slug === null) return;
     const target = rules.normalizeTarget(req.body.url, ownHost);
@@ -287,15 +307,15 @@ function createApp({ store, config }) {
     await store.putLink(slug, target.url);
     log(`links: changed "${slug}" (${req.auth.kind})`);
     res.json({ slug, url: target.url, short_url: shortUrl(slug) });
-  }));
+  })));
 
-  api.delete("/links/:slug", wrap(async (req, res) => {
+  api.delete("/links/:slug", wrap((req, res) => exclusive(async () => {
     const slug = existing(req, res);
     if (slug === null) return;
     await store.deleteLink(slug);
     log(`links: deleted "${slug}" (${req.auth.kind})`);
     res.json({ deleted: slug });
-  }));
+  })));
 
   api.use((req, res) => res.status(404).json({ error: "not found" }));
   app.use("/api", api);
@@ -364,6 +384,8 @@ if (require.main === module) {
     }
   };
   load();
+  // Pick up a login that was reset or changed outside this process within a minute.
+  setInterval(() => { if (store.ready) store.refreshUser().catch(() => {}); }, 60_000).unref();
 
   if (config.sessionSecret.length < 32) console.log("SESSION_SECRET is missing or short: browser login is switched off");
   if (config.apiToken.length < 32) console.log("API_TOKEN is missing or short: the token API is switched off");

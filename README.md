@@ -30,11 +30,13 @@ salt) in the database, next to the links. A sign-in sets the cookie `__Host-urls
 the browser that change something must come from the app's own origin and carry the session's
 CSRF token (`X-CSRF-Token` header, or `_csrf` in a form).
 
-Wrong tries (password, API token, setup token) are slowed down: per address the first 4 are
-free, the 5th locks that address for 30 seconds, and every further one doubles the lock up to
-15 minutes. Across all addresses at most 20 wrong tries per 10 minutes are accepted. During a
-lock the answer is `429` with `Retry-After`, also for the right password. Redirects are never
-locked.
+Wrong tries are slowed down, separately for passwords, API tokens and the setup token: per
+address the first 4 are free, the 5th locks that address for 30 seconds, and every further one
+doubles the lock up to 15 minutes. For passwords there is also a cap across all addresses of
+20 wrong tries per 10 minutes; addresses the owner has signed in from before (the last 8 are
+remembered) skip that cap, so a stranger cannot lock the owner out. During a lock the answer is
+`429` with `Retry-After`, also for the right password. The right API token is never locked, and
+redirects are never locked.
 
 ### First-time setup
 
@@ -104,7 +106,8 @@ No secret belongs in this repository: they live in the environment of the server
 
 The app expects a reverse proxy in front that terminates TLS and sets `X-Forwarded-For` to the
 address that connected to it (Traefik does). If that address is Cloudflare's, the visitor's
-address is taken from `CF-Connecting-IP`; from anywhere else that header is ignored. The address
+address is taken from `CF-Connecting-IP`; from anywhere else that header is ignored. Forwarded headers are believed only when the
+connection itself comes from a private address (the proxy). The address
 is only used for the rate limits (240 redirects and 120 admin or API requests per minute and
 address) and in the log lines about sign-ins.
 

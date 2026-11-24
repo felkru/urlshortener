@@ -120,6 +120,7 @@ test("validation: schemes, lengths, slugs", async () => {
       { slug: "a", url: "" },
       { slug: "a", url: { $gt: "" } },
       { slug: "a", url: t.origin + "/blog" },
+      { slug: "a", url: t.origin.replace("localhost", "localhost.") + "/blog" },
       { slug: "a/b", url: "https://example.org/" },
       { slug: "a.b", url: "https://example.org/" },
       { slug: "$set", url: "https://example.org/" },
@@ -249,10 +250,47 @@ test("wrong logins are slowed down, also for the right password", async () => {
     const locked = await t.call("/login", form({ username: "felix", password: PASSWORD }));
     assert.equal(locked.status, 429);
     assert.ok(Number(locked.headers.get("retry-after")) >= 1);
-    // the token is slowed down from that address too
-    assert.equal((await t.call("/api/links", { headers: bearer })).status, 429);
+    // the API token is a separate door: the right token keeps working during the password lock,
+    // wrong tokens get their own backoff, and even then the right one still works
+    assert.equal((await t.call("/api/links", { headers: bearer })).status, 200);
+    const wrong = { Authorization: "Bearer " + "w".repeat(40) };
+    for (let i = 0; i < 5; i++) assert.equal((await t.call("/api/links", { headers: wrong })).status, 401);
+    assert.equal((await t.call("/api/links", { headers: wrong })).status, 429);
+    assert.equal((await t.call("/api/links", { headers: bearer })).status, 200);
     // redirects are not affected
     assert.equal((await t.call("/blog")).status, 302);
+  } finally { await t.close(); }
+});
+
+test("strangers cannot lock the owner out: known addresses skip the cap across addresses", async () => {
+  const t = await boot({ failureLimits: { free: 5, globalMax: 6 } });
+  try {
+    const from = (ip, opts) => ({ ...opts, headers: { ...opts.headers, "X-Forwarded-For": ip } });
+    const first = await t.call("/setup", from("198.51.100.1", form({ token: SETUP_TOKEN, username: "felix", password: PASSWORD, password2: PASSWORD })));
+    assert.equal(first.status, 303);
+    assert.deepEqual(t.store.user.known_addresses, ["198.51.100.1"]);
+    for (let i = 0; i < 6; i++) {
+      assert.equal((await t.call("/login", from("203.0.113." + (10 + i), form({ username: "felix", password: "guess number " + i })))).status, 401);
+    }
+    // the cap is reached: a new address is refused even with the right password ...
+    assert.equal((await t.call("/login", from("203.0.113.99", form({ username: "felix", password: PASSWORD })))).status, 429);
+    // ... the owner's known address is not
+    assert.equal((await t.call("/login", from("198.51.100.1", form({ username: "felix", password: PASSWORD })))).status, 303);
+    // but a known address still has its own backoff
+    for (let i = 0; i < 5; i++) await t.call("/login", from("198.51.100.1", form({ username: "felix", password: "oops " + i })));
+    assert.equal((await t.call("/login", from("198.51.100.1", form({ username: "felix", password: PASSWORD })))).status, 429);
+  } finally { await t.close(); }
+});
+
+test("two creates of the same slug at once: one wins, one gets 409", async () => {
+  const t = await boot();
+  try {
+    const make = (n) => t.call("/api/links", json("POST", { slug: "race", url: "https://example.org/" + n }, bearer));
+    const statuses = (await Promise.all([make(1), make(2), make(3)])).map((r) => r.status).sort();
+    assert.deepEqual(statuses, [201, 409, 409]);
+    const auto = await Promise.all([1, 2, 3].map((n) => t.call("/api/links", json("POST", { url: "https://example.org/auto" + n }, bearer))));
+    const slugs = await Promise.all(auto.map((r) => r.json().then((j) => j.slug)));
+    assert.equal(new Set(slugs).size, 3);
   } finally { await t.close(); }
 });
 
@@ -316,6 +354,9 @@ test("client address: Cloudflare's header counts only when Cloudflare connected"
   assert.equal(auth.clientIp(req("198.51.100.7", "203.0.113.9")), "198.51.100.7");
   assert.equal(auth.clientIp(req("1.2.3.4, 198.51.100.7", undefined)), "198.51.100.7");
   assert.equal(auth.clientIp(req(undefined, "203.0.113.9")), "172.18.0.2");
+  // reached directly from a public address: forwarded headers are not believed
+  const direct = { headers: { "x-forwarded-for": "162.158.1.1", "cf-connecting-ip": "203.0.113.9" }, socket: { remoteAddress: "::ffff:198.51.100.50" } };
+  assert.equal(auth.clientIp(direct), "198.51.100.50");
   assert.equal(auth.ipKey("2001:db8:1:2:3:4:5:6"), "2001:db8:1:2::/64");
   assert.equal(auth.ipKey("2001:db8::1"), "2001:db8:0:0::/64");
 });
